@@ -1,0 +1,5 @@
+{
+  "name": "CharlesTrack",
+  "description": "A secure professional Patient Health Record Management System for community clinics, featuring authenticated access, patient registration, medical history tracking, and vital signs monitoring.",
+  "requestFramePermissions": []
+}
