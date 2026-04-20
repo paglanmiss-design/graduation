@@ -4,77 +4,73 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
-import cookieSession from "cookie-session";
+import session from "express-session";
 import bcrypt from "bcryptjs";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+const LOG_FILE = path.join(__dirname, "server.log");
+const logger = (msg: string) => {
+  const line = `${new Date().toISOString()} - ${msg}\n`;
+  console.log(msg);
+  try {
+    fs.appendFileSync(LOG_FILE, line);
+  } catch (err) {
+    // Ignore log errors
+  }
+};
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
 
-app.set("trust proxy", true);
+app.set("trust proxy", 1);
+
+app.use(session({
+  name: "clinicsid",
+  secret: "charlestrack-secret-key",
+  resave: true,
+  saveUninitialized: true,
+  proxy: true,
+  cookie: { 
+    secure: true,
+    sameSite: "none",
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000
+  }
+}));
+
+// Request Logger
+app.use((req, res, next) => {
+  logger(`${req.method} ${req.url}`);
+  next();
+});
 
 // Database Setup
 let db: Database.Database;
 try {
-  const dbPath = path.join(process.cwd(), "clinic.db");
-  db = new Database(dbPath);
-  console.log(`Database connected successfully at ${dbPath}`);
+  db = new Database("clinic.db");
+  console.log("Database connected successfully");
 } catch (err) {
   console.error("Failed to connect to database, using in-memory", err);
   db = new Database(":memory:");
 }
 
-app.use(cookieSession({
-  name: "charlestrack-session",
-  keys: ["charlestrack-secret-key"],
-  maxAge: 24 * 60 * 60 * 1000, // 24 hours
-  secure: true,
-  sameSite: "none",
-  httpOnly: true
-}));
-
-// Token-based Auth Middleware (Fallback for blocked cookies)
-app.use((req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.substring(7);
-    try {
-      // For this app, we'll use the userId as a simple token
-      const user: any = db.prepare("SELECT id, username, role FROM users WHERE id = ?").get(token);
-      if (user) {
-        (req.session as any).userId = user.id;
-        (req.session as any).username = user.username;
-        (req.session as any).role = user.role;
-        console.log(`[Auth] Token authenticated user: ${user.username}`);
-      }
-    } catch (err) {
-      console.error("[Auth] Token verification failed", err);
-    }
-  }
-  next();
-});
-
-// Request Logger with Session Debug
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - UserID: ${(req.session as any)?.userId}`);
-  next();
-});
-
-// Initialize tables with individual execution to catch specific errors
-const tables = [
-  `CREATE TABLE IF NOT EXISTS patients (
+// Initialize tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS patients (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     age INTEGER NOT NULL,
     gender TEXT NOT NULL,
     contact_info TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`,
-  `CREATE TABLE IF NOT EXISTS medical_records (
+  );
+
+  CREATE TABLE IF NOT EXISTS medical_records (
     id TEXT PRIMARY KEY,
     patient_id TEXT NOT NULL,
     diagnosis TEXT NOT NULL,
@@ -82,8 +78,9 @@ const tables = [
     visit_date TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (patient_id) REFERENCES patients(id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS appointments (
+  );
+
+  CREATE TABLE IF NOT EXISTS appointments (
     id TEXT PRIMARY KEY,
     patient_id TEXT NOT NULL,
     appointment_date TEXT NOT NULL,
@@ -91,8 +88,9 @@ const tables = [
     status TEXT DEFAULT 'Scheduled',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (patient_id) REFERENCES patients(id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS vitals (
+  );
+
+  CREATE TABLE IF NOT EXISTS vitals (
     id TEXT PRIMARY KEY,
     patient_id TEXT NOT NULL,
     weight REAL,
@@ -102,8 +100,9 @@ const tables = [
     temperature REAL,
     recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (patient_id) REFERENCES patients(id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS contact_messages (
+  );
+
+  CREATE TABLE IF NOT EXISTS contact_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
@@ -111,45 +110,40 @@ const tables = [
     message TEXT NOT NULL,
     is_read INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`,
-  `CREATE TABLE IF NOT EXISTS message_replies (
+  );
+
+  CREATE TABLE IF NOT EXISTS message_replies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL,
     sender TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (message_id) REFERENCES contact_messages(id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS users (
+  );
+
+  CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
-    role TEXT DEFAULT 'admin'
-  )`
-];
+    role TEXT DEFAULT 'staff',
+    full_name TEXT,
+    bio TEXT,
+    profile_picture TEXT
+  );
+`);
 
-tables.forEach(sql => {
-  try {
-    db.exec(sql);
-  } catch (err) {
-    console.error(`Error creating table: ${err}`);
-  }
-});
-
-// Create or update default admin
+// Create default admin if not exists
+const admin = db.prepare("SELECT * FROM users WHERE username = ?").get("admin");
 const hashedPassword = bcrypt.hashSync("admin123", 10);
-const admin = db.prepare("SELECT * FROM users WHERE username = ?").get("admin") as any;
 if (!admin) {
   db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)")
-    .run("user-admin-" + Date.now(), "admin", hashedPassword, "admin");
+    .run("user-" + Date.now(), "admin", hashedPassword, "admin");
   console.log("Default admin user created: admin / admin123");
 } else {
+  // Update password and role to ensure it's correct
   db.prepare("UPDATE users SET password = ?, role = ? WHERE username = ?").run(hashedPassword, "admin", "admin");
-  console.log("Admin user password reset to admin123 for debugging.");
+  console.log("Admin account synchronized");
 }
-
-const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as any;
-console.log(`Total users in database: ${userCount.count}`);
 
 // Auth Routes
 app.post("/api/login", (req, res) => {
@@ -168,12 +162,23 @@ app.post("/api/login", (req, res) => {
     (req.session as any).userId = user.id;
     (req.session as any).username = user.username;
     (req.session as any).role = user.role;
-    
-    console.log(`Login successful for user: ${username}, UserID in session: ${(req.session as any).userId}`);
-    res.json({ 
-      success: true, 
-      user: { id: user.id, username: user.username, role: user.role },
-      token: user.id // Return userId as token for fallback
+    (req.session as any).full_name = user.full_name;
+    (req.session as any).bio = user.bio;
+    (req.session as any).profile_picture = user.profile_picture;
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error:", err);
+        return res.status(500).json({ error: "Could not save session" });
+      }
+      console.log(`Login successful for user: ${username}, session ID: ${req.sessionID}`);
+      res.json({ success: true, user: { 
+        id: user.id, 
+        username: user.username, 
+        role: user.role,
+        full_name: user.full_name,
+        bio: user.bio,
+        profile_picture: user.profile_picture
+      } });
     });
   } catch (error: any) {
     console.error(`Login error for user ${username}:`, error);
@@ -182,20 +187,23 @@ app.post("/api/login", (req, res) => {
 });
 
 app.post("/api/logout", (req, res) => {
-  req.session = null;
-  res.json({ success: true });
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ error: "Could not log out" });
+    res.json({ success: true });
+  });
 });
 
 app.get("/api/me", (req, res) => {
-  const session = req.session as any;
-  console.log(`[GET /api/me] UserID: ${session?.userId}`);
-  if (session?.userId) {
+  if ((req.session as any).userId) {
     res.json({ 
       authenticated: true, 
       user: { 
-        id: session.userId, 
-        username: session.username,
-        role: session.role
+        id: (req.session as any).userId, 
+        username: (req.session as any).username,
+        role: (req.session as any).role,
+        full_name: (req.session as any).full_name,
+        bio: (req.session as any).bio,
+        profile_picture: (req.session as any).profile_picture
       } 
     });
   } else {
@@ -203,111 +211,8 @@ app.get("/api/me", (req, res) => {
   }
 });
 
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
-});
-
-// Signup Route
-app.post("/api/signup", (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: "Username and password required" });
-  
-  try {
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)")
-      .run("user-" + Date.now(), username, hashedPassword, "staff");
-    res.status(201).json({ success: true });
-  } catch (error: any) {
-    if (error.message.includes("UNIQUE constraint failed")) {
-      return res.status(400).json({ error: "Username already exists" });
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// User Management (Admin Only)
-app.get("/api/users", (req, res) => {
-  const session = req.session as any;
-  console.log(`[GET /api/users] Session: ${JSON.stringify({ userId: session.userId, role: session.role })}`);
-  
-  if (session.role !== "admin") {
-    console.log(`[GET /api/users] Access denied: Role is ${session.role}`);
-    return res.status(403).json({ error: "Forbidden: Admin access required" });
-  }
-  
-  try {
-    const users = db.prepare("SELECT id, username, role FROM users").all();
-    console.log(`[GET /api/users] Found ${users.length} users`);
-    res.json(users);
-  } catch (error: any) {
-    console.error("[GET /api/users] Error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.patch("/api/users/:id/role", (req, res) => {
-  if ((req.session as any).role !== "admin") return res.status(403).json({ error: "Forbidden" });
-  const { id } = req.params;
-  const { role } = req.body;
-  try {
-    db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
-    res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.delete("/api/users/:id", (req, res) => {
-  if ((req.session as any).role !== "admin") return res.status(403).json({ error: "Forbidden" });
-  const { id } = req.params;
-  try {
-    db.prepare("DELETE FROM users WHERE id = ?").run(id);
-    res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post("/api/users", (req, res) => {
-  const session = req.session as any;
-  console.log(`[POST /api/users] Session: ${JSON.stringify({ userId: session.userId, role: session.role })}`);
-  
-  if (session.role !== "admin") return res.status(403).json({ error: "Forbidden: Admin access required" });
-  const { username, password, role } = req.body;
-  if (!username || !password || !role) return res.status(400).json({ error: "Missing fields" });
-  try {
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    const id = "user-" + Date.now();
-    db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)")
-      .run(id, username, hashedPassword, role);
-    console.log(`[POST /api/users] Created user: ${username} with role: ${role}`);
-    res.status(201).json({ success: true, user: { id, username, role } });
-  } catch (error: any) {
-    console.error("[POST /api/users] Error:", error);
-    if (error.message.includes("UNIQUE constraint failed")) {
-      return res.status(400).json({ error: "Username already exists" });
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.patch("/api/users/:id/password", (req, res) => {
-  if ((req.session as any).role !== "admin") return res.status(403).json({ error: "Forbidden" });
-  const { id } = req.params;
-  const { password } = req.body;
-  if (!password) return res.status(400).json({ error: "Password required" });
-  try {
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashedPassword, id);
-    res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // API Routes
 app.get("/api/patients", (req, res) => {
-  if (!(req.session as any).userId) return res.status(401).json({ error: "Unauthorized" });
   try {
     const { query } = req.query;
     let patients;
@@ -318,7 +223,6 @@ app.get("/api/patients", (req, res) => {
     }
     res.json(patients);
   } catch (error: any) {
-    console.error("Error fetching patients:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -406,10 +310,6 @@ app.get("/api/patients/:id/vitals", (req, res) => {
 });
 
 app.post("/api/vitals", (req, res) => {
-  if (!(req.session as any).userId) return res.status(401).json({ error: "Unauthorized" });
-  const role = (req.session as any).role;
-  if (role !== "admin" && role !== "doctor") return res.status(403).json({ error: "Forbidden: Only doctors or admins can add vitals" });
-  
   const { id, patient_id, weight, height, blood_pressure, heart_rate, temperature } = req.body;
   try {
     db.prepare("INSERT INTO vitals (id, patient_id, weight, height, blood_pressure, heart_rate, temperature) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -421,10 +321,6 @@ app.post("/api/vitals", (req, res) => {
 });
 
 app.post("/api/records", (req, res) => {
-  if (!(req.session as any).userId) return res.status(401).json({ error: "Unauthorized" });
-  const role = (req.session as any).role;
-  if (role !== "admin" && role !== "doctor") return res.status(403).json({ error: "Forbidden: Only doctors or admins can add records" });
-
   const { id, patient_id, diagnosis, prescription, visit_date } = req.body;
   try {
     const patient = db.prepare("SELECT id FROM patients WHERE id = ?").get(patient_id);
@@ -440,31 +336,16 @@ app.post("/api/records", (req, res) => {
   }
 });
 
-app.get("/api/health", (req, res) => {
-  try {
-    const msgCount = db.prepare("SELECT COUNT(*) as count FROM contact_messages").get().count;
-    res.json({ status: "ok", database: "connected", messages: msgCount });
-  } catch (err: any) {
-    res.status(500).json({ status: "error", error: err.message });
-  }
-});
-
 app.post("/api/contact", (req, res) => {
   const { first_name, last_name, email, message } = req.body;
-  console.log(`[CONTACT] Incoming message attempt from: ${email}`);
-  
-  if (!first_name || !last_name || !email || !message) {
-    console.error("[CONTACT] Validation failed: Missing fields", req.body);
-    return res.status(400).json({ error: "All fields are required" });
-  }
-
+  console.log(`[CONTACT] Message received from: ${email} (${first_name} ${last_name})`);
   try {
     const result = db.prepare("INSERT INTO contact_messages (first_name, last_name, email, message) VALUES (?, ?, ?, ?)")
       .run(first_name, last_name, email, message);
-    console.log(`[CONTACT] Message successfully saved. ID: ${result.lastInsertRowid}`);
+    console.log(`[CONTACT] Message saved with ID: ${result.lastInsertRowid}`);
     res.status(201).json({ success: true });
   } catch (error: any) {
-    console.error("[CONTACT] Database error while saving message:", error);
+    console.error("[CONTACT] Error saving message:", error);
     res.status(500).json({ error: "Failed to send message" });
   }
 });
@@ -479,6 +360,9 @@ app.get("/api/contact", (req, res) => {
     const messages = db.prepare("SELECT * FROM contact_messages ORDER BY created_at DESC").all();
     console.log(`[CONTACT] Fetched ${messages.length} messages for user ${userId}`);
     
+    // Mark all as read when fetched by admin
+    db.prepare("UPDATE contact_messages SET is_read = 1 WHERE is_read = 0").run();
+
     const messagesWithReplies = messages.map((msg: any) => {
       const replies = db.prepare("SELECT * FROM message_replies WHERE message_id = ? ORDER BY created_at ASC").all(msg.id);
       return { ...msg, replies };
@@ -497,36 +381,114 @@ app.post("/api/contact/:id/reply", (req, res) => {
   try {
     db.prepare("INSERT INTO message_replies (message_id, sender, content) VALUES (?, ?, ?)")
       .run(id, "admin", content);
-    db.prepare("UPDATE contact_messages SET is_read = 1 WHERE id = ?").run(id);
     res.status(201).json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.post("/api/contact/:id/read", (req, res) => {
-  if (!(req.session as any).userId) return res.status(401).json({ error: "Unauthorized" });
-  const { id } = req.params;
+// User Management
+app.get("/api/users", (req, res) => {
   try {
-    db.prepare("UPDATE contact_messages SET is_read = 1 WHERE id = ?").run(id);
+    const users = db.prepare("SELECT id, username, role FROM users").all();
+    res.json(users);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/users", (req, res) => {
+  const { username, password, role } = req.body;
+  logger(`[USER_MGMT] Public creation request for: ${username}`);
+  
+  if (!username || !password) {
+    return res.status(200).json({ error: "Username and password are required" });
+  }
+
+  try {
+    const targetRole = role || 'staff';
+    logger(`[USER_MGMT] Creating user: ${username} as ${targetRole}`);
+    
+    // Check if user already exists
+    const existing = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+    if (existing) {
+      logger(`[USER_MGMT] Failed: ${username} already exists`);
+      return res.status(200).json({ error: "Username already taken" });
+    }
+
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    const userId = "user-" + Date.now();
+    db.prepare("INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, ?)")
+      .run(userId, username, hashedPassword, targetRole);
+    
+    logger(`[USER_MGMT] SUCCESS: User ${username} created with ID ${userId}`);
+    res.status(201).json({ success: true });
+  } catch (error: any) {
+    logger(`[USER_MGMT] CRITICAL ERROR: ${error.message}`);
+    res.status(200).json({ error: `Internal error: ${error.message}` });
+  }
+});
+
+app.patch("/api/users/:id/role", (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body;
+  
+  if (!role || (role !== 'admin' && role !== 'staff')) {
+    return res.status(400).json({ error: "Invalid role specified" });
+  }
+
+  try {
+    const result = db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
+    if (result.changes === 0) return res.status(404).json({ error: "User not found" });
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 404 for API routes
-app.all("/api/*", (req, res) => {
-  res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+app.patch("/api/me/profile", (req, res) => {
+  const userId = (req.session as any).userId;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+  const { full_name, bio, profile_picture } = req.body;
+
+  try {
+    db.prepare("UPDATE users SET full_name = ?, bio = ?, profile_picture = ? WHERE id = ?")
+      .run(full_name, bio, profile_picture, userId);
+    
+    // Update session
+    (req.session as any).full_name = full_name;
+    (req.session as any).bio = bio;
+    (req.session as any).profile_picture = profile_picture;
+
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// Global Error Handler for API
-app.use("/api", (err: any, req: any, res: any, next: any) => {
-  console.error("API Error:", err);
-  res.status(err.status || 500).json({ 
-    error: err.message || "Internal Server Error",
-    details: process.env.NODE_ENV === "development" ? err.stack : undefined
-  });
+// Admin command to read logs
+app.get("/api/admin/logs", (req, res) => {
+  if ((req.session as any).role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  try {
+    if (!fs.existsSync(LOG_FILE)) return res.json({ logs: "No logs found." });
+    const logs = fs.readFileSync(LOG_FILE, "utf-8");
+    res.json({ logs });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete("/api/users/:id", (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = db.prepare("DELETE FROM users WHERE id = ?").run(id);
+    if (result.changes === 0) return res.status(404).json({ error: "User not found" });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 async function startServer() {
@@ -539,9 +501,7 @@ async function startServer() {
     app.use(vite.middlewares);
     
     app.get("*", async (req, res, next) => {
-      // Skip API routes - they should have been handled or hit the API 404
       if (req.url.startsWith("/api")) return next();
-      
       try {
         const fs = await import("fs");
         let template = fs.readFileSync(path.resolve(__dirname, "index.html"), "utf-8");
@@ -554,16 +514,22 @@ async function startServer() {
     });
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res, next) => {
-      if (req.url.startsWith("/api")) return next();
+    app.get("*", (req, res) => {
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    logger(`Server running on http://localhost:${PORT}`);
   });
 }
+
+// Global Error Handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Unhandled Error:", err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: "Something went wrong on the server", details: err.message });
+});
 
 startServer().catch(err => {
   console.error("Failed to start server:", err);

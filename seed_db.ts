@@ -69,14 +69,14 @@ db.exec(`
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
-    role TEXT DEFAULT 'admin'
+    role TEXT DEFAULT 'staff'
   );
 `);
 
 // Seed Users
 const hashedPassword = bcrypt.hashSync("admin123", 10);
-db.prepare("INSERT OR IGNORE INTO users (id, username, password) VALUES (?, ?, ?)")
-  .run("user-admin", "admin", hashedPassword);
+db.prepare("INSERT OR IGNORE INTO users (id, username, password, role) VALUES (?, ?, ?, ?)")
+  .run("user-admin", "admin", hashedPassword, "admin");
 
 // Seed Patients
 const patients = [

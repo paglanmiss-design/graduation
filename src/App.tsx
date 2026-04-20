@@ -4,7 +4,8 @@ import {
   Phone, Calendar, ChevronRight, ClipboardList, AlertCircle, 
   CheckCircle2, LayoutDashboard, Clock, Thermometer, Heart, 
   Scale, Ruler, Droplets, TrendingUp, Users, ArrowUpRight,
-  Lock, LogIn, LogOut, Download, MessageSquare, Send, RefreshCw
+  Lock, LogIn, LogOut, Download, MessageSquare, Send, RefreshCw,
+  Trash2, ShieldCheck, ShieldAlert, Camera, Upload, Stethoscope
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -16,27 +17,11 @@ import autoTable from "jspdf-autotable";
 export default function App() {
   const [user, setUser] = useState<UserType | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [token, setToken] = useState<string | null>(localStorage.getItem("charlestrack_token"));
-
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    const headers = new Headers(options.headers);
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-    return fetch(url, {
-      ...options,
-      headers,
-      credentials: "include"
-    });
-  };
   const [showLanding, setShowLanding] = useState(true);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
-  const [activeTab, setActiveTab] = useState<"dashboard" | "directory" | "appointments" | "register" | "messages" | "users">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "directory" | "appointments" | "register" | "accounts" | "profile">("dashboard");
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [userSearchQuery, setUserSearchQuery] = useState("");
-  const [showSignup, setShowSignup] = useState(false);
-  const [signupForm, setSignupForm] = useState({ username: "", password: "", confirmPassword: "" });
+  const [allUsers, setAllUsers] = useState<UserType[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patientHistory, setPatientHistory] = useState<MedicalRecord[]>([]);
@@ -44,13 +29,8 @@ export default function App() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [health, setHealth] = useState<{ status: string; database: string; messages: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [replyingTo, setReplyingTo] = useState<number | null>(null);
-  const [replyContent, setReplyContent] = useState("");
-  const [showCreateUser, setShowCreateUser] = useState(false);
-  const [adminUserForm, setAdminUserForm] = useState({ username: "", password: "", role: "staff" });
 
   // Forms
   const [patientForm, setPatientForm] = useState({ id: "", name: "", age: "", gender: "Male", contact_info: "" });
@@ -58,6 +38,18 @@ export default function App() {
   const [appointmentForm, setAppointmentForm] = useState({ patient_id: "", date: format(new Date(), "yyyy-MM-dd'T'HH:mm"), reason: "" });
   const [vitalsForm, setVitalsForm] = useState({ weight: "", height: "", blood_pressure: "", heart_rate: "", temperature: "" });
   const [contactForm, setContactForm] = useState({ first_name: "", last_name: "", email: "", message: "" });
+  const [userForm, setUserForm] = useState({ username: "", password: "", role: "staff" });
+  const [profileForm, setProfileForm] = useState({ full_name: "", bio: "", profile_picture: "" });
+
+  useEffect(() => {
+    if (user) {
+      setProfileForm({
+        full_name: user.full_name || "",
+        bio: user.bio || "",
+        profile_picture: user.profile_picture || ""
+      });
+    }
+  }, [user]);
 
   useEffect(() => {
     checkAuth();
@@ -69,7 +61,6 @@ export default function App() {
       fetchPatients();
       fetchAppointments();
       fetchMessages();
-      if (user.role === "admin") fetchUsers();
 
       // Poll for new messages every 30 seconds
       const interval = setInterval(fetchMessages, 30000);
@@ -77,231 +68,39 @@ export default function App() {
     }
   }, [user]);
 
+  useEffect(() => {
+    if (activeTab === "accounts" && user?.role === "admin") {
+      fetchUsers();
+    }
+  }, [activeTab]);
+
+  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
+    return fetch(url, {
+      ...options,
+      credentials: "include",
+    });
+  };
+
   const checkAuth = async () => {
     try {
-      console.log("Checking authentication...");
       const res = await fetchWithAuth("/api/me");
       const data = await res.json();
-      console.log("Auth response:", data);
       if (data.authenticated) {
         setUser(data.user);
-      } else {
-        setUser(null);
-        if (!data.authenticated && token) {
-          console.warn("Token invalid, clearing");
-          localStorage.removeItem("charlestrack_token");
-          setToken(null);
-        }
       }
     } catch (err) {
       console.error("Auth check failed", err);
-      setUser(null);
     } finally {
       setAuthChecked(true);
     }
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    console.log("Attempting login with:", loginForm.username);
-    try {
-      const res = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(loginForm),
-        credentials: "include"
-      });
-      console.log("Login response status:", res.status);
-      const data = await res.json();
-      console.log("Login response data:", data);
-      if (res.ok) {
-        if (data.token) {
-          localStorage.setItem("charlestrack_token", data.token);
-          setToken(data.token);
-        }
-        setUser(data.user);
-        showMsg("success", "Welcome back!");
-      } else {
-        showMsg("error", data.error || "Login failed. Please check your credentials.");
-      }
-    } catch (err) {
-      console.error("Login error:", err);
-      showMsg("error", "Network error during login. Please check your connection.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetchWithAuth("/api/logout", { method: "POST" });
-      localStorage.removeItem("charlestrack_token");
-      setToken(null);
-      setUser(null);
-      setActiveTab("dashboard");
-      showMsg("success", "Logged out successfully");
-    } catch (err) {
-      showMsg("error", "Logout failed");
-    }
-  };
-
-  const fetchDashboardData = async () => {
-    try {
-      const [statsRes, healthRes] = await Promise.all([
-        fetchWithAuth("/api/dashboard/stats"),
-        fetchWithAuth("/api/health")
-      ]);
-      if (statsRes.ok) setStats(await statsRes.json());
-      if (healthRes.ok) setHealth(await healthRes.json());
-    } catch (err) { console.error("Dashboard fetch error:", err); }
-  };
-
-  const fetchPatients = async (query = "") => {
-    setLoading(true);
-    try {
-      const res = await fetchWithAuth(`/api/patients${query ? `?query=${query}` : ""}`);
-      
-      if (res.status === 401) {
-        setUser(null);
-        return;
-      }
-
-      const data = await res.json();
-      if (res.ok && Array.isArray(data)) {
-        setPatients(data);
-      } else {
-        console.error("Failed to fetch patients:", data.error || "Invalid response");
-        setPatients([]);
-      }
-    } catch (err) { 
-      console.error("Patient fetch error:", err);
-      setPatients([]);
-    } finally { setLoading(false); }
-  };
-
-  const fetchAppointments = async () => {
-    try {
-      const res = await fetchWithAuth("/api/appointments");
-      const data = await res.json();
-      if (res.ok && Array.isArray(data)) {
-        setAppointments(data);
-      } else {
-        console.error("Failed to fetch appointments:", data.error || "Invalid response");
-        setAppointments([]);
-      }
-    } catch (err) { 
-      console.error("Appointment fetch error:", err);
-      setAppointments([]);
-    }
-  };
-
-  const fetchMessages = async () => {
-    try {
-      const res = await fetchWithAuth("/api/contact");
-      
-      if (res.status === 401) {
-        if (user) setUser(null);
-        return;
-      }
-
-      const data = await res.json();
-      if (res.ok) {
-        setMessages(data);
-      } else {
-        showMsg("error", "Failed to sync messages");
-        console.error("Failed to fetch messages:", data.error);
-      }
-    } catch (err) { 
-      console.error("Message fetch error:", err);
-    }
-  };
-
   const fetchUsers = async () => {
     try {
-      console.log("Fetching users...");
       const res = await fetchWithAuth("/api/users");
-      
-      if (res.status === 401) {
-        console.warn("Session expired or unauthorized. Logging out.");
-        setUser(null);
-        return;
-      }
-      
-      const contentType = res.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        const text = await res.text();
-        console.error("Expected JSON but got:", text.substring(0, 100));
-        throw new Error("Server returned non-JSON response. Check console for details.");
-      }
-
       const data = await res.json();
-      if (res.ok && Array.isArray(data)) {
-        setUsers(data);
-      } else {
-        console.error("Failed to fetch users:", data.error || "Invalid response");
-        showMsg("error", data.error || "Failed to fetch users");
-        setUsers([]);
-      }
-    } catch (err: any) { 
-      console.error("Failed to fetch users:", err);
-      showMsg("error", err.message || "Failed to fetch users");
-      setUsers([]);
-    }
-  };
-
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (signupForm.password !== signupForm.confirmPassword) {
-      showMsg("error", "Passwords do not match");
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch("/api/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: signupForm.username, password: signupForm.password }),
-        credentials: "include"
-      });
-      if (res.ok) {
-        showMsg("success", "Account created! Please login.");
-        setShowSignup(false);
-        setLoginForm({ username: signupForm.username, password: "" });
-      } else {
-        const data = await res.json();
-        showMsg("error", data.error || "Signup failed");
-      }
-    } catch (err) {
-      showMsg("error", "Network error during signup");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdateUserRole = async (userId: string, role: string) => {
-    try {
-      const res = await fetchWithAuth(`/api/users/${userId}/role`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role })
-      });
-      if (res.ok) {
-        showMsg("success", "User role updated");
-        fetchUsers();
-      }
-    } catch (err) { showMsg("error", "Failed to update role"); }
-  };
-
-  const handleDeleteUser = async (userId: string) => {
-    if (!confirm("Are you sure you want to delete this user?")) return;
-    try {
-      const res = await fetchWithAuth(`/api/users/${userId}`, { method: "DELETE" });
-      if (res.ok) {
-        showMsg("success", "User deleted");
-        fetchUsers();
-      }
-    } catch (err) { showMsg("error", "Failed to delete user"); }
+      if (res.ok) setAllUsers(data);
+    } catch (err) { console.error(err); }
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -311,41 +110,141 @@ export default function App() {
       const res = await fetchWithAuth("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(adminUserForm)
+        body: JSON.stringify(userForm)
       });
-      const data = await res.json();
+      
+      const contentType = res.headers.get("content-type");
+      let data;
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        console.error("Non-JSON Server Response:", text);
+        data = { error: "The server sent back something that wasn't JSON. This usually means a connection error." };
+      }
+      
       if (res.ok) {
-        showMsg("success", "User created successfully");
-        setAdminUserForm({ username: "", password: "", role: "staff" });
-        setShowCreateUser(false);
+        showMsg("success", "Account created successfully!");
+        setUserForm({ username: "", password: "", role: "staff" });
         fetchUsers();
       } else {
-        showMsg("error", data.error || "Failed to create user");
+        showMsg("error", data.error || `Server Error ${res.status}`);
+        console.error("Account creation failure details:", data);
       }
-    } catch (err) {
-      showMsg("error", "Network error");
+    } catch (err: any) { 
+      showMsg("error", `Network Error: ${err.message || 'Check your internet connection'}`);
+      console.error("Fetch implementation error:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResetPassword = async (userId: string) => {
-    const newPassword = prompt("Enter new password for this user:");
-    if (!newPassword) return;
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm("Are you sure you want to delete this account?")) return;
     try {
-      const res = await fetchWithAuth(`/api/users/${userId}/password`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: newPassword })
-      });
+      const res = await fetchWithAuth(`/api/users/${userId}`, { method: "DELETE" });
       if (res.ok) {
-        showMsg("success", "Password reset successfully");
+        showMsg("success", "Account deleted");
+        fetchUsers();
       } else {
         const data = await res.json();
-        showMsg("error", data.error || "Failed to reset password");
+        showMsg("error", data.error || "Failed to delete");
+      }
+    } catch (err) { showMsg("error", "Network error"); }
+  };
+
+  const handleChangeRole = async (userId: string, newRole: string) => {
+    try {
+      const res = await fetchWithAuth(`/api/users/${userId}/role`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: newRole })
+      });
+      if (res.ok) {
+        showMsg("success", "Role updated");
+        fetchUsers();
+      } else {
+        const data = await res.json().catch(() => ({ error: "Update failed" }));
+        showMsg("error", data.error || "Failed to update role");
+      }
+    } catch (err) { showMsg("error", "Network error"); }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await fetchWithAuth("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(loginForm)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUser(data.user);
+        showMsg("success", "Welcome back!");
+      } else {
+        showMsg("error", data.error || "Login failed");
       }
     } catch (err) {
-      showMsg("error", "Network error");
+      showMsg("error", "Network error during login");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetchWithAuth("/api/logout", { method: "POST" });
+      if (res.ok) {
+        setUser(null);
+        setActiveTab("dashboard");
+        showMsg("success", "Logged out successfully");
+      }
+    } catch (err) {
+      showMsg("error", "Logout failed");
+    }
+  };
+
+  const fetchDashboardData = async () => {
+    try {
+      const res = await fetchWithAuth("/api/dashboard/stats");
+      const data = await res.json();
+      setStats(data);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchPatients = async (query = "") => {
+    setLoading(true);
+    try {
+      const res = await fetchWithAuth(`/api/patients${query ? `?query=${query}` : ""}`);
+      const data = await res.json();
+      setPatients(data);
+    } catch (err) { console.error(err); } finally { setLoading(false); }
+  };
+
+  const fetchAppointments = async () => {
+    try {
+      const res = await fetchWithAuth("/api/appointments");
+      const data = await res.json();
+      setAppointments(data);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchMessages = async () => {
+    try {
+      const res = await fetchWithAuth("/api/contact");
+      const data = await res.json();
+      if (res.ok) {
+        setMessages(data);
+      } else {
+        if (res.status !== 401) { // Don't show error if just not logged in
+          showMsg("error", "Failed to sync messages");
+        }
+        console.error("Failed to fetch messages:", data.error);
+      }
+    } catch (err) { 
+      console.error("Message fetch error:", err);
     }
   };
 
@@ -364,13 +263,6 @@ export default function App() {
     } catch (err) {
       showMsg("error", "Failed to send reply");
     }
-  };
-
-  const handleMarkAsRead = async (messageId: number) => {
-    try {
-      const res = await fetchWithAuth(`/api/contact/${messageId}/read`, { method: "POST" });
-      if (res.ok) fetchMessages();
-    } catch (err) { console.error(err); }
   };
 
   const fetchPatientDetails = async (patientId: string) => {
@@ -400,7 +292,7 @@ export default function App() {
         body: JSON.stringify({ ...patientForm, age: ageNum })
       });
       
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ error: "Invalid server response" }));
       
       if (res.ok) {
         showMsg("success", "Patient registered!");
@@ -408,8 +300,8 @@ export default function App() {
         fetchPatients();
         fetchDashboardData();
       } else {
-        showMsg("error", data.error || "Failed to register");
-        console.error("Registration error:", data.error);
+        showMsg("error", data.error || `Error ${res.status}`);
+        console.error("Registration failed:", data);
       }
     } catch (err: any) {
       showMsg("error", `Network error: ${err.message || 'Check server connection'}`);
@@ -515,18 +407,53 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(contactForm)
       });
-      const data = await res.json();
       if (res.ok) {
-        showMsg("success", "Message sent! You can view it in the admin dashboard.");
+        showMsg("success", "Message sent successfully! We will get back to you soon.");
         setContactForm({ first_name: "", last_name: "", email: "", message: "" });
       } else {
-        showMsg("error", data.error || "Failed to send message. Please try again.");
+        showMsg("error", "Failed to send message. Please try again.");
       }
     } catch (err) {
       showMsg("error", "Network error. Please check your connection.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await fetchWithAuth("/api/me/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profileForm)
+      });
+      if (res.ok) {
+        showMsg("success", "Profile updated successfully!");
+        checkAuth();
+      } else {
+        const data = await res.json();
+        showMsg("error", data.error || "Update failed");
+      }
+    } catch (err) { showMsg("error", "Network error"); }
+    finally { setLoading(false); }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      showMsg("error", "Image too large. Please select an image under 2MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setProfileForm({ ...profileForm, profile_picture: reader.result as string });
+    };
+    reader.readAsDataURL(file);
   };
 
   const showMsg = (type: "success" | "error", text: string) => {
@@ -637,8 +564,8 @@ export default function App() {
           <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-slate-100 z-50">
             <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="bg-emerald-500 p-2 rounded-xl shadow-lg shadow-emerald-200">
-                  <img src="https://picsum.photos/seed/logo/64/64" alt="CharlesTrack Logo" className="w-6 h-6 object-contain" referrerPolicy="no-referrer" />
+                <div className="bg-gradient-to-br from-emerald-400 to-teal-600 p-2.5 rounded-2xl shadow-xl shadow-emerald-200/50 flex items-center justify-center">
+                  <Stethoscope size={28} className="text-white" strokeWidth={2.5} />
                 </div>
                 <span className="font-bold text-2xl text-slate-900 tracking-tight italic serif">CharlesTrack</span>
               </div>
@@ -649,36 +576,14 @@ export default function App() {
                 <a href="#about" className="hover:text-emerald-600 transition-colors">About Us</a>
                 <a href="#contact" className="hover:text-emerald-600 transition-colors">Contact</a>
                 <button 
-                  onClick={() => setShowLanding(false)}
-                  className="bg-slate-900 text-white px-6 py-2.5 rounded-full hover:bg-slate-800 transition-all shadow-lg shadow-slate-200 flex items-center gap-2"
+                   onClick={() => setShowLanding(false)}
+                   className="bg-slate-900 text-white px-6 py-2.5 rounded-full hover:bg-slate-800 transition-all shadow-lg shadow-slate-200 flex items-center gap-2"
                 >
-                  <LogIn size={18} />
-                  Login
+                  <Lock size={18} />
+                  Staff Portal
                 </button>
               </div>
             </div>
-            <button 
-              onClick={() => setActiveTab("messages")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-300 ${activeTab === "messages" ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
-            >
-              <MessageSquare size={20} />
-              <span className="font-bold text-sm">Messages</span>
-              {messages.filter(m => m.is_read === 0).length > 0 && (
-                <span className="ml-auto bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full">
-                  {messages.filter(m => m.is_read === 0).length}
-                </span>
-              )}
-            </button>
-
-            {user?.role === "admin" && (
-              <button 
-                onClick={() => setActiveTab("users")}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-300 ${activeTab === "users" ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
-              >
-                <Lock size={20} />
-                <span className="font-bold text-sm">User Management</span>
-              </button>
-            )}
           </nav>
 
           {/* Hero Section */}
@@ -698,18 +603,18 @@ export default function App() {
                   <span className="text-emerald-500 italic serif">Digitally Perfected.</span>
                 </h1>
                 <p className="text-xl text-slate-500 mb-10 leading-relaxed max-w-lg">
-                  CharlesTrack provides a secure, intuitive, and powerful platform for managing personal health records and clinic operations.
+                  CharlesTrack provides a secure, intuitive, and professional platform for managing patient health records and clinic operations.
                 </p>
                 <div className="flex flex-wrap gap-4">
                   <button 
                     onClick={() => setShowLanding(false)}
                     className="bg-emerald-500 text-white px-8 py-4 rounded-2xl font-bold text-lg hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-200 flex items-center gap-2"
                   >
-                    Get Started Now
+                    Portal Access
                     <ArrowUpRight size={20} />
                   </button>
                   <a href="#modules" className="px-8 py-4 rounded-2xl font-bold text-lg text-slate-600 hover:bg-slate-50 transition-all border border-slate-200">
-                    Explore Modules
+                    Explore Solution
                   </a>
                 </div>
               </motion.div>
@@ -878,29 +783,16 @@ export default function App() {
                   <div className="space-y-6">
                     <div className="flex items-center gap-4 text-slate-300">
                       <div className="w-12 h-12 bg-slate-800 rounded-xl flex items-center justify-center text-emerald-500"><Phone size={20} /></div>
-                      <div><p className="text-xs font-bold text-slate-500 uppercase">Phone</p><p className="font-medium">+86 186 5192 7052</p></div>
+                      <div><p className="text-xs font-bold text-slate-500 uppercase">Phone</p><p className="font-medium">+63 912 345 6789</p></div>
                     </div>
                     <div className="flex items-center gap-4 text-slate-300">
                       <div className="w-12 h-12 bg-slate-800 rounded-xl flex items-center justify-center text-emerald-500"><FileText size={20} /></div>
-                      <div><p className="text-xs font-bold text-slate-500 uppercase">Email</p><p className="font-medium">support@charlestrack.com</p></div>
+                      <div><p className="text-xs font-bold text-slate-500 uppercase">Email</p><p className="font-medium">support@meditrack.ph</p></div>
                     </div>
                     <div className="flex items-center gap-4 text-slate-300">
                       <div className="w-12 h-12 bg-slate-800 rounded-xl flex items-center justify-center text-emerald-500"><Activity size={20} /></div>
-                      <div><p className="text-xs font-bold text-slate-500 uppercase">Office</p><p className="font-medium">JUST int build 111</p></div>
+                      <div><p className="text-xs font-bold text-slate-500 uppercase">Office</p><p className="font-medium">BGC, Taguig City, Metro Manila</p></div>
                     </div>
-                    {user && (
-                      <button 
-                        onClick={() => {
-                          setShowLanding(false);
-                          setActiveTab("messages");
-                        }}
-                        className="mt-4 flex items-center gap-2 text-emerald-400 hover:text-emerald-300 font-bold text-sm transition-colors"
-                      >
-                        <MessageSquare size={18} />
-                        View Active Messages in Dashboard
-                        <ArrowUpRight size={16} />
-                      </button>
-                    )}
                   </div>
                 </div>
                 <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl">
@@ -958,9 +850,6 @@ export default function App() {
                     >
                       {loading ? "Sending..." : "Send Message"}
                     </button>
-                    <p className="text-[10px] text-center text-slate-400 uppercase tracking-widest font-bold mt-4">
-                      Note: Messages are stored securely in our clinic dashboard.
-                    </p>
                   </form>
                 </div>
               </div>
@@ -972,8 +861,8 @@ export default function App() {
             <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-12 border-b border-slate-900 pb-12 mb-12">
               <div className="col-span-1 md:col-span-2">
                 <div className="flex items-center gap-2 mb-6">
-                  <div className="bg-emerald-500 p-2 rounded-xl">
-                    <img src="https://picsum.photos/seed/logo/64/64" alt="CharlesTrack Logo" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
+                  <div className="bg-gradient-to-br from-emerald-400 to-teal-600 p-2 rounded-xl flex items-center justify-center">
+                    <Stethoscope size={20} className="text-white" strokeWidth={2.5} />
                   </div>
                   <span className="font-bold text-xl text-white tracking-tight">CharlesTrack</span>
                 </div>
@@ -1034,8 +923,8 @@ export default function App() {
           </button>
 
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center p-4 bg-emerald-500/10 rounded-3xl mb-4">
-              <img src="https://picsum.photos/seed/logo/128/128" alt="CharlesTrack Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
+            <div className="inline-flex items-center justify-center p-6 bg-gradient-to-br from-emerald-400/20 to-teal-600/20 rounded-[2rem] mb-6 shadow-inner border border-emerald-500/10">
+              <Stethoscope size={48} className="text-emerald-500" strokeWidth={1.5} />
             </div>
             <h1 className="text-3xl font-bold text-white tracking-tight">CharlesTrack</h1>
             <p className="text-slate-400 mt-2">Personal Health Record Management System</p>
@@ -1044,131 +933,55 @@ export default function App() {
           <div className="bg-slate-900 p-8 rounded-[2rem] border border-slate-800 shadow-2xl">
             <div className="flex items-center gap-3 mb-8">
               <div className="p-2 bg-emerald-500/20 rounded-lg text-emerald-500">
-                {showSignup ? <UserPlus size={20} /> : <Lock size={20} />}
+                <Lock size={20} />
               </div>
-              <h2 className="text-xl font-bold text-white">{showSignup ? "Create Account" : "Secure Login"}</h2>
+              <h2 className="text-xl font-bold text-white">Secure Login</h2>
             </div>
 
-            {showSignup ? (
-              <form onSubmit={handleSignup} className="space-y-6">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Username</label>
-                  <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                    <input 
-                      required
-                      type="text"
-                      placeholder="Choose a username"
-                      value={signupForm.username}
-                      onChange={e => setSignupForm({ ...signupForm, username: e.target.value })}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-                    />
-                  </div>
+            <form onSubmit={handleLogin} className="space-y-6">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Username</label>
+                <div className="relative">
+                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                  <input 
+                    required
+                    type="text"
+                    placeholder="Enter your username"
+                    value={loginForm.username}
+                    onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
+                    className="w-full pl-12 pr-4 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                  />
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Password</label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                    <input 
-                      required
-                      type="password"
-                      placeholder="••••••••"
-                      value={signupForm.password}
-                      onChange={e => setSignupForm({ ...signupForm, password: e.target.value })}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-                    />
-                  </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                  <input 
+                    required
+                    type="password"
+                    placeholder="••••••••"
+                    value={loginForm.password}
+                    onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
+                    className="w-full pl-12 pr-4 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                  />
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Confirm Password</label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                    <input 
-                      required
-                      type="password"
-                      placeholder="••••••••"
-                      value={signupForm.confirmPassword}
-                      onChange={e => setSignupForm({ ...signupForm, confirmPassword: e.target.value })}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-                    />
-                  </div>
-                </div>
-
-                <button 
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-emerald-500 text-slate-950 py-4 rounded-2xl font-bold text-lg hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {loading ? "Creating Account..." : (
-                    <>
-                      <UserPlus size={20} />
-                      Sign Up
-                    </>
-                  )}
-                </button>
-
-                <p className="text-center text-sm text-slate-500">
-                  Already have an account?{" "}
-                  <button type="button" onClick={() => setShowSignup(false)} className="text-emerald-500 font-bold hover:underline">
-                    Login
-                  </button>
-                </p>
-              </form>
-            ) : (
-              <form onSubmit={handleLogin} className="space-y-6">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Username</label>
-                  <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                    <input 
-                      required
-                      type="text"
-                      placeholder="Enter your username"
-                      value={loginForm.username}
-                      onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 tracking-wider">Password</label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                    <input 
-                      required
-                      type="password"
-                      placeholder="••••••••"
-                      value={loginForm.password}
-                      onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-                    />
-                  </div>
-                </div>
-
-                <button 
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-emerald-500 text-slate-950 py-4 rounded-2xl font-bold text-lg hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {loading ? "Authenticating..." : (
-                    <>
-                      <LogIn size={20} />
-                      Login to Dashboard
-                    </>
-                  )}
-                </button>
-
-                <p className="text-center text-sm text-slate-500">
-                  Don't have an account?{" "}
-                  <button type="button" onClick={() => setShowSignup(true)} className="text-emerald-500 font-bold hover:underline">
-                    Sign Up
-                  </button>
-                </p>
-              </form>
-            )}
+              <button 
+                type="submit"
+                disabled={loading}
+                className="w-full bg-emerald-500 text-slate-950 py-4 rounded-2xl font-bold text-lg hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? "Authenticating..." : (
+                  <>
+                    <LogIn size={20} />
+                    Login to Dashboard
+                  </>
+                )}
+              </button>
+            </form>
 
             <div className="mt-8 pt-8 border-t border-slate-800 text-center">
               <p className="text-slate-500 text-sm">
@@ -1204,8 +1017,8 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col sticky top-0 h-screen">
         <div className="p-6 flex items-center gap-3 border-b border-slate-800">
-          <div className="bg-emerald-500 p-2 rounded-lg">
-            <img src="https://picsum.photos/seed/logo/64/64" alt="CharlesTrack Logo" className="w-5 h-5 object-contain" referrerPolicy="no-referrer" />
+          <div className="bg-gradient-to-br from-emerald-400 to-teal-600 p-2.5 rounded-xl shadow-lg shadow-emerald-900/40">
+            <Stethoscope size={20} className="text-white" strokeWidth={2.5} />
           </div>
           <span className="font-bold text-white text-lg tracking-tight">CharlesTrack</span>
         </div>
@@ -1215,8 +1028,8 @@ export default function App() {
             { id: "directory", icon: Users, label: "Patients" },
             { id: "appointments", icon: Clock, label: "Schedule" },
             { id: "register", icon: UserPlus, label: "New Patient" },
-            { id: "messages", icon: MessageSquare, label: "Messages" },
-            ...(user?.role === "admin" ? [{ id: "users", icon: Lock, label: "User Management" }] : [])
+            { id: "profile", icon: User, label: "Profile" },
+            ...(user?.role === "admin" ? [{ id: "accounts", icon: Lock, label: "Accounts" }] : [])
           ].map(item => (
             <button
               key={item.id}
@@ -1227,7 +1040,7 @@ export default function App() {
                 <item.icon size={20} />
                 <span className="font-medium">{item.label}</span>
               </div>
-              {item.id === "messages" && messages.some(m => m.is_read === 0) && (
+              {item.id === "dashboard" && messages.some(m => m.is_read === 0) && (
                 <span className="bg-emerald-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full">
                   {messages.filter(m => m.is_read === 0).length}
                 </span>
@@ -1237,15 +1050,10 @@ export default function App() {
         </nav>
         <div className="p-4 border-t border-slate-800 space-y-4">
           <div className="bg-slate-800 p-4 rounded-xl">
-            <p className="text-xs font-bold text-slate-500 uppercase mb-2">Logged in as</p>
-            <div className="flex items-center gap-2 text-slate-300 text-sm font-bold">
+            <p className="text-xs font-bold text-slate-500 uppercase mb-2">User</p>
+            <div className="flex items-center gap-2 text-slate-300 text-sm">
               <User size={14} className="text-emerald-400" />
               {user?.username}
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${user?.role === 'admin' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>
-                {user?.role}
-              </span>
             </div>
           </div>
           <button 
@@ -1308,24 +1116,17 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {/* Stats Cards */}
                 {[
-                  { label: "Total Patients", value: stats?.totalPatients || 0, icon: Users, color: "text-blue-500", bg: "bg-blue-50", tab: "directory" },
-                  { label: "Medical Records", value: stats?.totalRecords || 0, icon: FileText, color: "text-emerald-500", bg: "bg-emerald-50", tab: "directory" },
-                  { label: "Upcoming Appts", value: stats?.upcomingAppointments || 0, icon: Clock, color: "text-amber-500", bg: "bg-amber-50", tab: "appointments" },
-                  { label: "Active Messages", value: messages.filter(m => m.is_read === 0).length, icon: MessageSquare, color: "text-rose-500", bg: "bg-rose-50", tab: "messages" }
+                  { label: "Total Patients", value: stats?.totalPatients || 0, icon: Users, color: "text-blue-500", bg: "bg-blue-50" },
+                  { label: "Medical Records", value: stats?.totalRecords || 0, icon: FileText, color: "text-emerald-500", bg: "bg-emerald-50" },
+                  { label: "Upcoming Appts", value: stats?.upcomingAppointments || 0, icon: Clock, color: "text-amber-500", bg: "bg-amber-50" },
+                  { label: "Active Messages", value: messages.filter(m => m.is_read === 0).length, icon: MessageSquare, color: "text-rose-500", bg: "bg-rose-50" }
                 ].map(stat => (
-                  <div 
-                    key={stat.label} 
-                    onClick={() => stat.tab && setActiveTab(stat.tab as any)}
-                    className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all cursor-pointer group hover:border-emerald-200"
-                  >
-                    <div className={`${stat.bg} w-12 h-12 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                  <div key={stat.label} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                    <div className={`${stat.bg} w-12 h-12 rounded-2xl flex items-center justify-center mb-4`}>
                       <stat.icon size={24} className={stat.color} />
                     </div>
                     <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">{stat.label}</p>
-                    <div className="flex items-center justify-between mt-1">
-                      <p className="text-3xl font-black text-slate-800">{stat.value}</p>
-                      <ArrowUpRight size={20} className="text-slate-300 group-hover:text-emerald-500 transition-colors" />
-                    </div>
+                    <p className="text-3xl font-black text-slate-800 mt-1">{stat.value}</p>
                   </div>
                 ))}
 
@@ -1414,31 +1215,6 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* System Status Widget */}
-                <div className="lg:col-span-1 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-                  <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">System Status</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-600">API Status</span>
-                      <span className={`w-2 h-2 rounded-full ${health?.status === 'ok' ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse`} />
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-600">Database</span>
-                      <span className="text-xs font-bold text-slate-800">{health?.database || 'Unknown'}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-600">Total Messages</span>
-                      <span className="text-xs font-bold text-slate-800">{health?.messages ?? 0}</span>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={fetchDashboardData}
-                    className="w-full mt-6 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-[10px] font-bold text-slate-400 uppercase tracking-widest transition-all"
-                  >
-                    Refresh Status
-                  </button>
-                </div>
-
                 {/* Patient Messages - Full Width Bottom */}
                 <div className="lg:col-span-4 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
                   <div className="flex items-center justify-between mb-8">
@@ -1457,71 +1233,27 @@ export default function App() {
                     {messages.length > 0 ? messages.slice(0, 3).map((msg) => (
                       <div key={msg.id} className="group bg-slate-50 p-6 rounded-2xl border border-transparent hover:border-emerald-200 hover:bg-white transition-all">
                         <div className="flex justify-between items-start mb-4">
-                          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 group-hover:text-emerald-500 transition-colors shadow-sm relative">
+                          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 group-hover:text-emerald-500 transition-colors shadow-sm">
                             <User size={20} />
-                            {msg.is_read === 0 && (
-                              <span className="absolute -top-1 -right-1 w-3 h-3 bg-rose-500 border-2 border-white rounded-full"></span>
-                            )}
                           </div>
-                          <div className="flex flex-col items-end">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                              {format(new Date(msg.created_at), "MMM d, HH:mm")}
-                            </span>
-                            {msg.is_read === 0 && (
-                              <button 
-                                onClick={() => handleMarkAsRead(msg.id)}
-                                className="text-[9px] font-bold text-emerald-600 hover:text-emerald-700 uppercase mt-1"
-                              >
-                                Mark as read
-                              </button>
-                            )}
-                          </div>
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                            {format(new Date(msg.created_at), "MMM d, HH:mm")}
+                          </span>
                         </div>
                         <p className="font-bold text-slate-800">{msg.first_name} {msg.last_name}</p>
                         <p className="text-xs text-slate-500 mb-4">{msg.email}</p>
                         <div className="bg-white/50 p-3 rounded-xl text-sm text-slate-600 italic line-clamp-2 mb-4">
                           "{msg.message}"
                         </div>
-                        
-                        {replyingTo === msg.id ? (
-                          <div className="space-y-2">
-                            <textarea 
-                              autoFocus
-                              placeholder="Type your reply..."
-                              value={replyContent}
-                              onChange={(e) => setReplyContent(e.target.value)}
-                              className="w-full p-3 bg-white border border-emerald-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 min-h-[80px] resize-none"
-                            />
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => {
-                                  handleReplyMessage(msg.id, replyContent);
-                                  setReplyingTo(null);
-                                  setReplyContent("");
-                                }}
-                                className="flex-1 py-2 bg-emerald-500 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-all"
-                              >
-                                Send
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  setReplyingTo(null);
-                                  setReplyContent("");
-                                }}
-                                className="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <button 
-                            onClick={() => setReplyingTo(msg.id)}
-                            className="w-full py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-all"
-                          >
-                            Send Quick Reply
-                          </button>
-                        )}
+                        <button 
+                          onClick={() => {
+                            const reply = prompt("Enter your reply:");
+                            if (reply) handleReplyMessage(msg.id, reply);
+                          }}
+                          className="w-full py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-all"
+                        >
+                          Send Quick Reply
+                        </button>
                       </div>
                     )) : (
                       <div className="col-span-full py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
@@ -1531,279 +1263,6 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === "messages" && (
-            <motion.div key="messages" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-8">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Patient Inquiries</h2>
-                  <p className="text-slate-500">Manage and respond to messages from the contact portal.</p>
-                </div>
-                <button 
-                  onClick={fetchMessages}
-                  className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl font-bold text-sm text-slate-600 hover:bg-slate-50 transition-all"
-                >
-                  <RefreshCw size={18} />
-                  Refresh
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 gap-6">
-                {messages.length > 0 ? messages.map((msg) => (
-                  <div key={msg.id} className={`bg-white p-8 rounded-3xl border ${msg.is_read === 0 ? 'border-emerald-200 shadow-emerald-50' : 'border-slate-200'} shadow-sm transition-all`}>
-                    <div className="flex flex-col md:flex-row justify-between gap-6 mb-8">
-                      <div className="flex items-center gap-4">
-                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${msg.is_read === 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                          <User size={28} />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-lg font-bold text-slate-800">{msg.first_name} {msg.last_name}</h3>
-                            {msg.is_read === 0 && (
-                              <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">New</span>
-                            )}
-                          </div>
-                          <p className="text-sm text-slate-500">{msg.email}</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">
-                          {format(new Date(msg.created_at), "MMMM d, yyyy 'at' h:mm a")}
-                        </span>
-                        {msg.is_read === 0 && (
-                          <button 
-                            onClick={() => handleMarkAsRead(msg.id)}
-                            className="text-xs font-bold text-emerald-600 hover:text-emerald-700 underline"
-                          >
-                            Mark as read
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 mb-8">
-                      <p className="text-slate-700 leading-relaxed italic">"{msg.message}"</p>
-                    </div>
-
-                    {msg.replies && msg.replies.length > 0 && (
-                      <div className="space-y-4 mb-8 pl-8 border-l-2 border-emerald-100">
-                        {msg.replies.map((reply: any) => (
-                          <div key={reply.id} className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center text-white">
-                                <CheckCircle2 size={12} />
-                              </div>
-                              <span className="text-xs font-bold text-emerald-600 uppercase tracking-widest">Clinic Response</span>
-                              <span className="text-[10px] text-slate-400 ml-auto">{format(new Date(reply.created_at), "MMM d, h:mm a")}</span>
-                            </div>
-                            <p className="text-sm text-slate-700">{reply.content}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="flex flex-col gap-4">
-                      {replyingTo === msg.id ? (
-                        <div className="space-y-4">
-                          <textarea 
-                            autoFocus
-                            placeholder="Type your response here..."
-                            value={replyContent}
-                            onChange={(e) => setReplyContent(e.target.value)}
-                            className="w-full p-4 bg-white border border-emerald-200 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 min-h-[120px] shadow-inner"
-                          />
-                          <div className="flex gap-3">
-                            <button 
-                              onClick={() => {
-                                handleReplyMessage(msg.id, replyContent);
-                                setReplyingTo(null);
-                                setReplyContent("");
-                              }}
-                              className="flex-1 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200"
-                            >
-                              Send Response
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setReplyingTo(null);
-                                setReplyContent("");
-                              }}
-                              className="px-6 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button 
-                          onClick={() => setReplyingTo(msg.id)}
-                          className="flex items-center justify-center gap-2 w-full py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-all group"
-                        >
-                          <Send size={18} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-                          Reply to Message
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )) : (
-                  <div className="py-24 text-center bg-white rounded-[3rem] border-2 border-dashed border-slate-200">
-                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                      <MessageSquare className="text-slate-300" size={40} />
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-800 mb-2">No messages found</h3>
-                    <p className="text-slate-500">When patients contact you from the landing page, they will appear here.</p>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === "users" && user?.role === "admin" && (
-            <motion.div key="users" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-8">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-800 tracking-tight">User Management</h2>
-                  <p className="text-slate-500">Manage clinic staff accounts and permissions.</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <input 
-                      type="text" 
-                      placeholder="Search users..." 
-                      value={userSearchQuery}
-                      onChange={(e) => setUserSearchQuery(e.target.value)}
-                      className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none w-64"
-                    />
-                    <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                  </div>
-                  <button 
-                    onClick={() => setShowCreateUser(!showCreateUser)}
-                    className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-200"
-                  >
-                    <UserPlus size={20} />
-                    {showCreateUser ? "Cancel" : "Create New User"}
-                  </button>
-                </div>
-              </div>
-
-              <AnimatePresence>
-                {showCreateUser && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-                      <h3 className="text-lg font-bold text-slate-800 mb-6">Register New Staff Member</h3>
-                      <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Username</label>
-                          <input 
-                            required
-                            type="text" 
-                            placeholder="johndoe" 
-                            value={adminUserForm.username}
-                            onChange={e => setAdminUserForm({...adminUserForm, username: e.target.value})}
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500" 
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Password</label>
-                          <input 
-                            required
-                            type="password" 
-                            placeholder="••••••••" 
-                            value={adminUserForm.password}
-                            onChange={e => setAdminUserForm({...adminUserForm, password: e.target.value})}
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500" 
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Role</label>
-                          <select 
-                            value={adminUserForm.role}
-                            onChange={e => setAdminUserForm({...adminUserForm, role: e.target.value})}
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                          >
-                            <option value="admin">Admin</option>
-                            <option value="doctor">Doctor</option>
-                            <option value="staff">Staff</option>
-                          </select>
-                        </div>
-                        <div className="md:col-span-3">
-                          <button 
-                            type="submit"
-                            disabled={loading}
-                            className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
-                          >
-                            {loading ? "Creating..." : "Create Account"}
-                          </button>
-                        </div>
-                      </form>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200">
-                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Username</th>
-                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Role</th>
-                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.filter(u => u.username.toLowerCase().includes(userSearchQuery.toLowerCase())).map((u) => (
-                      <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-400">
-                              <User size={16} />
-                            </div>
-                            <span className="font-bold text-slate-700">{u.username}</span>
-                            {u.id === user.id && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded font-black uppercase">You</span>}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <select 
-                            value={u.role}
-                            disabled={u.id === user.id}
-                            onChange={(e) => handleUpdateUserRole(u.id, e.target.value)}
-                            className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-50"
-                          >
-                            <option value="admin">Admin</option>
-                            <option value="doctor">Doctor</option>
-                            <option value="staff">Staff</option>
-                          </select>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-4">
-                            <button 
-                              onClick={() => handleResetPassword(u.id)}
-                              className="text-slate-400 hover:text-emerald-500 font-bold text-sm transition-colors flex items-center gap-1"
-                            >
-                              <RefreshCw size={14} />
-                              Reset Password
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteUser(u.id)}
-                              disabled={u.id === user.id}
-                              className="text-rose-500 hover:text-rose-600 font-bold text-sm disabled:opacity-30"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
             </motion.div>
           )}
@@ -1870,14 +1329,12 @@ export default function App() {
                       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                         <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><History className="text-emerald-500" size={20} /> Medical History</h3>
                         
-                        {(user?.role === "admin" || user?.role === "doctor") && (
-                          <form onSubmit={handleAddRecord} className="mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
-                            <p className="text-xs font-bold text-slate-500 uppercase mb-2">Add New Record</p>
-                            <input placeholder="Diagnosis" value={recordForm.diagnosis} onChange={e => setRecordForm({...recordForm, diagnosis: e.target.value})} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                            <input placeholder="Prescription" value={recordForm.prescription} onChange={e => setRecordForm({...recordForm, prescription: e.target.value})} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                            <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors">Add Record</button>
-                          </form>
-                        )}
+                        <form onSubmit={handleAddRecord} className="mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
+                          <p className="text-xs font-bold text-slate-500 uppercase mb-2">Add New Record</p>
+                          <input placeholder="Diagnosis" value={recordForm.diagnosis} onChange={e => setRecordForm({...recordForm, diagnosis: e.target.value})} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                          <input placeholder="Prescription" value={recordForm.prescription} onChange={e => setRecordForm({...recordForm, prescription: e.target.value})} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                          <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors">Add Record</button>
+                        </form>
 
                         <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
                           {patientHistory.map(record => (
@@ -1902,19 +1359,17 @@ export default function App() {
                           <h3 className="font-bold text-slate-800 flex items-center gap-2"><Thermometer className="text-red-500" size={20} /> Latest Vitals</h3>
                         </div>
 
-                        {(user?.role === "admin" || user?.role === "doctor") && (
-                          <form onSubmit={handleAddVitals} className="mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                            <p className="text-xs font-bold text-slate-500 uppercase mb-3">Record New Vitals</p>
-                            <div className="grid grid-cols-2 gap-3 mb-3">
-                              <input type="text" placeholder="BP (120/80)" value={vitalsForm.blood_pressure} onChange={e => setVitalsForm({...vitalsForm, blood_pressure: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                              <input type="number" placeholder="HR (bpm)" value={vitalsForm.heart_rate} onChange={e => setVitalsForm({...vitalsForm, heart_rate: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                              <input type="number" step="0.1" placeholder="Temp (°C)" value={vitalsForm.temperature} onChange={e => setVitalsForm({...vitalsForm, temperature: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                              <input type="number" step="0.1" placeholder="Wt (kg)" value={vitalsForm.weight} onChange={e => setVitalsForm({...vitalsForm, weight: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                              <input type="number" step="0.1" placeholder="Ht (cm)" value={vitalsForm.height} onChange={e => setVitalsForm({...vitalsForm, height: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                            </div>
-                            <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors">Save Vitals</button>
-                          </form>
-                        )}
+                        <form onSubmit={handleAddVitals} className="mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                          <p className="text-xs font-bold text-slate-500 uppercase mb-3">Record New Vitals</p>
+                          <div className="grid grid-cols-2 gap-3 mb-3">
+                            <input type="text" placeholder="BP (120/80)" value={vitalsForm.blood_pressure} onChange={e => setVitalsForm({...vitalsForm, blood_pressure: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                            <input type="number" placeholder="HR (bpm)" value={vitalsForm.heart_rate} onChange={e => setVitalsForm({...vitalsForm, heart_rate: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                            <input type="number" step="0.1" placeholder="Temp (°C)" value={vitalsForm.temperature} onChange={e => setVitalsForm({...vitalsForm, temperature: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                            <input type="number" step="0.1" placeholder="Wt (kg)" value={vitalsForm.weight} onChange={e => setVitalsForm({...vitalsForm, weight: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                            <input type="number" step="0.1" placeholder="Ht (cm)" value={vitalsForm.height} onChange={e => setVitalsForm({...vitalsForm, height: e.target.value})} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                          </div>
+                          <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors">Save Vitals</button>
+                        </form>
 
                         {patientVitals[0] ? (
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -2031,6 +1486,161 @@ export default function App() {
                   </div>
                   <button type="submit" className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 mt-4">Complete Registration</button>
                 </form>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "profile" && (
+            <motion.div key="profile" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="max-w-4xl mx-auto w-full">
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="h-32 bg-gradient-to-r from-emerald-500 to-teal-500" />
+                <div className="px-8 pb-8 text-left">
+                  <div className="relative -mt-16 mb-8 flex flex-col md:flex-row md:items-end gap-6">
+                    <div className="relative group">
+                      <div className="w-32 h-32 rounded-3xl border-4 border-white bg-slate-100 shadow-lg overflow-hidden flex items-center justify-center">
+                        {profileForm.profile_picture ? (
+                          <img src={profileForm.profile_picture} alt="Profile" className="w-full h-full object-cover" />
+                        ) : (
+                          <User size={48} className="text-slate-400" />
+                        )}
+                        <label className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                          <Camera className="text-white" size={24} />
+                          <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                        </label>
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <h2 className="text-3xl font-black text-slate-800">{user?.full_name || user?.username}</h2>
+                      <p className="text-slate-500 font-bold uppercase tracking-wider text-xs bg-slate-100 inline-block px-3 py-1 rounded-full mt-2">{user?.role}</p>
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleUpdateProfile} className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-6">
+                      <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2">Basic Information</h3>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Full Name</label>
+                        <input 
+                          placeholder="Your official name" 
+                          value={profileForm.full_name} 
+                          onChange={e => setProfileForm({...profileForm, full_name: e.target.value})} 
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Profile Picture</label>
+                        <div className="flex gap-4">
+                          <input 
+                            placeholder="https://example.com/photo.jpg" 
+                            value={profileForm.profile_picture} 
+                            onChange={e => setProfileForm({...profileForm, profile_picture: e.target.value})} 
+                            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500" 
+                          />
+                          <label className="bg-slate-200 p-3 rounded-xl cursor-pointer hover:bg-slate-300 transition-colors flex items-center justify-center">
+                            <Upload size={20} className="text-slate-600" />
+                            <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-6">
+                      <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-2">Professional Bio</h3>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Short Biography</label>
+                        <textarea 
+                          rows={5}
+                          placeholder="Tell us about yourself..." 
+                          value={profileForm.bio} 
+                          onChange={e => setProfileForm({...profileForm, bio: e.target.value})} 
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 resize-none" 
+                        />
+                      </div>
+                    </div>
+                    <div className="md:col-span-2 pt-4">
+                      <button 
+                        type="submit" 
+                        disabled={loading}
+                        className="w-full bg-slate-800 text-white py-4 rounded-2xl font-bold text-lg hover:bg-slate-900 transition-all shadow-lg shadow-slate-200 flex items-center justify-center gap-2"
+                      >
+                        {loading && <RefreshCw className="animate-spin" size={20} />}
+                        Save Profile Changes
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "accounts" && user?.role === "admin" && (
+            <motion.div key="accounts" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              <div className="lg:col-span-4">
+                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm sticky top-8">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="bg-indigo-100 p-3 rounded-2xl text-indigo-600"><UserPlus size={24} /></div>
+                    <div><h3 className="text-xl font-bold text-slate-800">Create Account</h3><p className="text-sm text-slate-500">Add a new staff or admin user.</p></div>
+                  </div>
+                  <form onSubmit={handleCreateUser} className="space-y-6">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Username</label>
+                      <input required placeholder="johndoe" value={userForm.username} onChange={e => setUserForm({...userForm, username: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Password</label>
+                      <input required type="password" placeholder="••••••••" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Role</label>
+                      <select value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="staff">Staff</option>
+                        <option value="admin">Administrator</option>
+                      </select>
+                    </div>
+                    <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">Create Account</button>
+                  </form>
+                </div>
+              </div>
+              <div className="lg:col-span-8">
+                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                  <h3 className="text-xl font-bold text-slate-800 mb-8 flex items-center gap-2"><Users className="text-indigo-500" size={24} /> System Users</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {allUsers.map(u => (
+                      <div key={u.id} className="p-6 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between group h-full">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg ${u.role === 'admin' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-500'}`}>
+                            {u.role === 'admin' ? <ShieldCheck size={24} /> : <User size={24} />}
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-800">{u.username}</p>
+                            <select 
+                              value={u.role}
+                              onChange={(e) => handleChangeRole(u.id, e.target.value)}
+                              className={`mt-1 block px-2 py-1 rounded text-[10px] font-black uppercase tracking-wider outline-none cursor-pointer ${u.role === 'admin' ? 'bg-indigo-500 text-white' : 'bg-slate-300 text-slate-600'}`}
+                            >
+                              <option value="staff">Staff</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </div>
+                        </div>
+                        {u.id !== user?.id && (
+                          <button 
+                            onClick={() => handleDeleteUser(u.id)}
+                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all md:opacity-0 group-hover:opacity-100 flex items-center gap-1 text-xs font-bold"
+                          >
+                             <Trash2 size={16} /> 
+                             <span className="hidden sm:inline">Delete</span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {allUsers.length === 0 && (
+                      <div className="col-span-full py-20 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+                        <Users size={48} className="mx-auto mb-4 text-slate-300" />
+                        <p className="text-slate-500">Syncing users...</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}

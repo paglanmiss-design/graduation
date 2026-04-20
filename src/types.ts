@@ -47,5 +47,8 @@ export interface DashboardStats {
 export interface User {
   id: string;
   username: string;
-  role: "admin" | "staff" | "doctor";
+  role: string;
+  full_name?: string;
+  bio?: string;
+  profile_picture?: string;
 }
